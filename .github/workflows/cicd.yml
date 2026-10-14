@@ -5,14 +5,10 @@ on:
     branches:
       - main
       - master
-      - '*'
-  pull_request:
-    branches:
-      - '*'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -40,17 +36,17 @@ jobs:
             -project boringNotch.xcodeproj \
             -scheme boringNotch
 
-      - name: Compile Release App (Ad-hoc / No Certificate Required)
+      - name: Compile Release App (Ad-hoc Signed)
         run: |
           xcodebuild build \
             -project boringNotch.xcodeproj \
             -scheme boringNotch \
             -configuration Release \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM=""
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Ad-hoc Sign and Package (.zip & .dmg)
         run: |
@@ -89,7 +85,6 @@ jobs:
           retention-days: 30
 
       - name: Publish to GitHub Releases
-        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest-build

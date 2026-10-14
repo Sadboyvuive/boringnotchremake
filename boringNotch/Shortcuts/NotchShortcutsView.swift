@@ -309,37 +309,27 @@ final class ShortcutManager: ObservableObject {
             runSystemAction(action, itemID: item.id, viewModel: viewModel)
 
         case .openApp(let bundleID, let appPath):
-            Task { @MainActor in
-                if Defaults[.closeNotchOnShortcutRun] {
-                    viewModel?.close()
-                }
-                if !appPath.isEmpty, FileManager.default.fileExists(atPath: appPath) {
-                    NSWorkspace.shared.openApplication(
-                        at: URL(fileURLWithPath: appPath),
-                        configuration: NSWorkspace.OpenConfiguration()
-                    )
-                } else if !bundleID.isEmpty,
-                          let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-                    NSWorkspace.shared.openApplication(
-                        at: appURL,
-                        configuration: NSWorkspace.OpenConfiguration()
-                    )
-                }
-                self.runningItemID = nil
-                self.showBanner("Opened \(item.title)")
+            if Defaults[.closeNotchOnShortcutRun] {
+                viewModel?.close()
             }
+            if !appPath.isEmpty, FileManager.default.fileExists(atPath: appPath) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: appPath))
+            } else if !bundleID.isEmpty,
+                      let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                NSWorkspace.shared.open(appURL)
+            }
+            runningItemID = nil
+            showBanner("Opened \(item.title)")
 
         case .openURL(let urlString):
-            Task { @MainActor in
-                if Defaults[.closeNotchOnShortcutRun] {
-                    viewModel?.close()
-                }
-                if let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
-                    self.showBanner("Opened \(item.title)")
-                }
-                self.runningItemID = nil
+            if Defaults[.closeNotchOnShortcutRun] {
+                viewModel?.close()
             }
+            if let url = URL(string: urlString) {
+                NSWorkspace.shared.open(url)
+                showBanner("Opened \(item.title)")
+            }
+            runningItemID = nil
         }
     }
 
@@ -414,10 +404,7 @@ final class ShortcutManager: ObservableObject {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(200))
                 let screenshotAppURL = URL(fileURLWithPath: "/System/Applications/Utilities/Screenshot.app")
-                NSWorkspace.shared.openApplication(
-                    at: screenshotAppURL,
-                    configuration: NSWorkspace.OpenConfiguration()
-                )
+                NSWorkspace.shared.open(screenshotAppURL)
                 self.runningItemID = nil
                 self.showBanner("Opened Screen Recorder")
             }
@@ -426,22 +413,18 @@ final class ShortcutManager: ObservableObject {
             viewModel?.close()
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(220))
-                let sampler = NSColorSampler()
-                sampler.show { selectedColor in
-                    Task { @MainActor in
-                        self.runningItemID = nil
-                        guard let rgb = selectedColor?.usingColorSpace(.sRGB) else { return }
-                        let r = Int(round(rgb.redComponent * 255))
-                        let g = Int(round(rgb.greenComponent * 255))
-                        let b = Int(round(rgb.blueComponent * 255))
-                        let hex = String(format: "#%02X%02X%02X", r, g, b)
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(hex, forType: .string)
-                        viewModel?.open()
-                        BoringViewCoordinator.shared.currentView = .shortcuts
-                        self.showBanner("Copied \(hex) to clipboard")
-                    }
-                }
+                let selectedColor = await NSColorSampler().sample()
+                self.runningItemID = nil
+                guard let rgb = selectedColor?.usingColorSpace(.sRGB) else { return }
+                let r = Int(round(rgb.redComponent * 255))
+                let g = Int(round(rgb.greenComponent * 255))
+                let b = Int(round(rgb.blueComponent * 255))
+                let hex = String(format: "#%02X%02X%02X", r, g, b)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(hex, forType: .string)
+                viewModel?.open()
+                BoringViewCoordinator.shared.currentView = .shortcuts
+                self.showBanner("Copied \(hex) to clipboard")
             }
 
         case .toggleDarkMode:
@@ -463,10 +446,7 @@ final class ShortcutManager: ObservableObject {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(150))
                 let saverURL = URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app")
-                NSWorkspace.shared.openApplication(
-                    at: saverURL,
-                    configuration: NSWorkspace.OpenConfiguration()
-                )
+                NSWorkspace.shared.open(saverURL)
                 self.runningItemID = nil
             }
 
@@ -512,7 +492,7 @@ final class ShortcutManager: ObservableObject {
                 viewModel?.close()
             }
             let url = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            NSWorkspace.shared.open(url)
             runningItemID = nil
         }
     }
@@ -566,11 +546,11 @@ struct NotchShortcutsView: View {
             if let banner = shortcutManager.statusBanner {
                 HStack(spacing: 5) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.green)
                         .font(.system(size: 10))
                     Text(banner)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(Color.white.opacity(0.9))
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 8)
@@ -580,7 +560,7 @@ struct NotchShortcutsView: View {
             } else {
                 Button {
                     let url = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
-                    NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                    NSWorkspace.shared.open(url)
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.up.forward.app")
@@ -589,7 +569,7 @@ struct NotchShortcutsView: View {
                             .font(.system(size: 10, weight: .medium))
                             .lineLimit(1)
                     }
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(Color.gray)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                 }
@@ -609,17 +589,17 @@ struct NotchShortcutsView: View {
             HStack(spacing: 7) {
                 Image(systemName: icon)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(isSelected ? .white : .gray)
+                    .foregroundStyle(isSelected ? Color.white : Color.gray)
                     .frame(width: 16)
                 Text(title)
                     .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? .white : .gray)
+                    .foregroundStyle(isSelected ? Color.white : Color.gray)
                     .lineLimit(1)
                 Spacer(minLength: 2)
                 if let badgeCount, badgeCount > 0 {
                     Text("\(badgeCount)")
                         .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(isSelected ? .white : .gray)
+                        .foregroundStyle(isSelected ? Color.white : Color.gray)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
                         .background(Capsule().fill(Color.white.opacity(isSelected ? 0.22 : 0.08)))
@@ -661,10 +641,10 @@ struct NotchShortcutsView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "bolt.slash.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                     Text("No pinned shortcuts")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                     Button("Restore Defaults") {
                         shortcutManager.resetToDefaultShortcuts()
                     }
@@ -705,11 +685,11 @@ struct NotchShortcutsView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 11))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                     TextField("Search Mac Shortcuts…", text: $searchText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 11.5))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
@@ -720,7 +700,7 @@ struct NotchShortcutsView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(Color.white.opacity(0.8))
                         .padding(5)
                         .background(Circle().fill(Color.white.opacity(0.1)))
                 }
@@ -740,7 +720,7 @@ struct NotchShortcutsView: View {
                     .controlSize(.small)
                 Text("Loading Shortcuts…")
                     .font(.system(size: 11))
-                    .foregroundStyle(.gray)
+                    .foregroundStyle(Color.gray)
                 Spacer()
             } else if filtered.isEmpty {
                 Spacer()
@@ -749,10 +729,10 @@ struct NotchShortcutsView: View {
                          ? "No Apple Shortcuts found"
                          : "No matching shortcuts")
                         .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                     Text("You can also type any Shortcut name in 'Add Shortcut'.")
                         .font(.system(size: 10))
-                        .foregroundStyle(.gray.opacity(0.8))
+                        .foregroundStyle(Color.gray.opacity(0.8))
                 }
                 Spacer()
             } else {
@@ -790,7 +770,7 @@ struct NotchShortcutsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Pin Apple Shortcut by Name")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.white)
                 HStack(spacing: 6) {
                     TextField("Shortcut name in Shortcuts.app", text: $newCustomShortcutName)
                         .textFieldStyle(.plain)
@@ -891,7 +871,7 @@ private struct ShortcutTileCard: View {
                     if isRunning {
                         ProgressView()
                             .controlSize(.mini)
-                            .tint(.white)
+                            .tint(Color.white)
                     } else if case .openApp(let bundleID, let appPath) = item.kind,
                               let iconImage = resolveAppIcon(bundleID: bundleID, path: appPath) {
                         Image(nsImage: iconImage)
@@ -901,18 +881,18 @@ private struct ShortcutTileCard: View {
                     } else {
                         Image(systemName: item.icon)
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.white)
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.title)
                         .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white)
                         .lineLimit(1)
                     Text(item.subtitle)
                         .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -977,16 +957,16 @@ private struct MacShortcutRowChip: View {
                         if isRunning {
                             ProgressView()
                                 .controlSize(.mini)
-                                .tint(.white)
+                                .tint(Color.white)
                         } else {
                             Image(systemName: "play.fill")
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color.white)
                         }
                     }
                     Text(name)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white)
                         .lineLimit(1)
                 }
             }
@@ -997,7 +977,7 @@ private struct MacShortcutRowChip: View {
             Button(action: onTogglePin) {
                 Image(systemName: isPinned ? "pin.fill" : "pin")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(isPinned ? .yellow : .gray)
+                    .foregroundStyle(isPinned ? Color.yellow : Color.gray)
                     .padding(4)
             }
             .buttonStyle(.plain)
@@ -1064,7 +1044,9 @@ struct NotchShortcutsSettingsSection: View {
                         tintHex: selectedSystemAction.defaultTintHex,
                         kind: .systemAction(selectedSystemAction)
                     )
-                    pinnedItems.append(item)
+                    var items = Defaults[.notchShortcutItems]
+                    items.append(item)
+                    Defaults[.notchShortcutItems] = items
                 }
                 Button("Reset Defaults") {
                     shortcutManager.resetToDefaultShortcuts()
@@ -1075,7 +1057,7 @@ struct NotchShortcutsSettingsSection: View {
         } footer: {
             Text("Access pinned Quick Actions and macOS Shortcuts directly from the Shortcuts tab inside the notch.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
         }
     }
 }

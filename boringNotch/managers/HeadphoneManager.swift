@@ -332,7 +332,7 @@ final class HeadphoneManager: ObservableObject {
             )
         }
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.availableOutputDevices = items
         }
     }
@@ -365,7 +365,7 @@ final class HeadphoneManager: ObservableObject {
             previousDataSourceID = getDeviceDataSource(deviceID: deviceID)
             let info = classifyDevice(deviceID: deviceID)
             let battery = fetchBluetoothBatteryInfo(matching: info.displayName)
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.isConnected = info.isHeadphone
                 self.currentDeviceName = info.displayName
                 self.currentDeviceIcon = info.icon
@@ -439,7 +439,7 @@ final class HeadphoneManager: ObservableObject {
         let battery = fetchBluetoothBatteryInfo(matching: info.displayName)
         refreshOutputDevicesList()
 
-        DispatchQueue.main.async {
+        Task { @MainActor in
             let wasConnected = self.isConnected
 
             if info.isHeadphone {
@@ -525,11 +525,10 @@ struct HeadphoneInlineBarView: View {
             HStack(spacing: 8) {
                 Image(systemName: coordinator.connectedDeviceIcon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(coordinator.headphoneConnected ? .white : .gray)
-                    .symbolEffect(.pulse, isActive: coordinator.headphoneConnected)
+                    .foregroundStyle(coordinator.headphoneConnected ? Color.white : Color.gray)
                 Text(coordinator.connectedDeviceName)
                     .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -537,7 +536,7 @@ struct HeadphoneInlineBarView: View {
             .padding(.leading, 12)
 
             Rectangle()
-                .fill(.black)
+                .fill(Color.black)
                 .frame(width: closedNotchWidth + 10)
 
             HStack(spacing: 6) {
@@ -551,15 +550,15 @@ struct HeadphoneInlineBarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: batterySymbol(for: battery))
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(battery > 20 ? .green : .red)
+                            .foregroundStyle(battery > 20 ? Color.green : Color.red)
                         Text("\(battery)%")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.white)
                     }
                 } else {
                     Text(coordinator.headphoneConnected ? "Connected" : "Disconnected")
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(Color.white.opacity(0.85))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -608,14 +607,14 @@ struct HeadphonePopupCardView: View {
 
                     Image(systemName: coordinator.connectedDeviceIcon)
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.white)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(coordinator.connectedDeviceName)
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.white)
                             .lineLimit(1)
 
                         HStack(spacing: 4) {
@@ -624,7 +623,7 @@ struct HeadphonePopupCardView: View {
                                 .frame(width: 6, height: 6)
                             Text(coordinator.headphoneConnected ? "Connected" : "Disconnected")
                                 .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(coordinator.headphoneConnected ? .green : .orange)
+                                .foregroundStyle(coordinator.headphoneConnected ? Color.green : Color.orange)
                         }
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
@@ -636,7 +635,7 @@ struct HeadphonePopupCardView: View {
 
                     Text(headphoneManager.transportLabel)
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                 }
 
                 Spacer(minLength: 8)
@@ -650,7 +649,7 @@ struct HeadphonePopupCardView: View {
                 HStack(spacing: 10) {
                     Image(systemName: volumeManager.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                         .frame(width: 16)
 
                     GeometryReader { geo in
@@ -670,7 +669,7 @@ struct HeadphonePopupCardView: View {
 
                     Text("\(Int(round((volumeManager.isMuted ? 0 : volumeManager.rawVolume) * 100)))%")
                         .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.gray)
+                        .foregroundStyle(Color.gray)
                         .frame(width: 32, alignment: .trailing)
                 }
             }
@@ -700,10 +699,10 @@ struct HeadphonePopupCardView: View {
             HStack(spacing: 5) {
                 Image(systemName: single > 20 ? "battery.100percent" : "battery.25percent")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(single > 20 ? .green : .red)
+                    .foregroundStyle(single > 20 ? Color.green : Color.red)
                 Text("\(single)%")
                     .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.white)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
@@ -715,10 +714,10 @@ struct HeadphonePopupCardView: View {
         VStack(spacing: 1) {
             Text(label)
                 .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                .foregroundStyle(.gray)
+                .foregroundStyle(Color.gray)
             Text("\(percent)%")
                 .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                .foregroundStyle(percent > 20 ? .green : .red)
+                .foregroundStyle(percent > 20 ? Color.green : Color.red)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
@@ -738,7 +737,7 @@ struct HeadphoneHeaderButton: View {
             showDevicesPopover.toggle()
         } label: {
             Capsule()
-                .fill(.black)
+                .fill(Color.black)
                 .frame(height: 30)
                 .overlay {
                     HStack(spacing: 5) {
@@ -784,7 +783,7 @@ struct HeadphoneHeaderButton: View {
                         HStack(spacing: 8) {
                             Image(systemName: device.icon)
                                 .frame(width: 16)
-                                .foregroundStyle(device.isCurrentDefault ? Color.accentColor : .secondary)
+                                .foregroundStyle(device.isCurrentDefault ? Color.accentColor : Color.secondary)
                             Text(device.name)
                                 .font(.system(size: 12, weight: device.isCurrentDefault ? .semibold : .regular))
                                 .lineLimit(1)
@@ -858,7 +857,7 @@ struct HeadphonePopupSettingsSection: View {
         } footer: {
             Text("Automatically expands the notch when AirPods, Bluetooth headphones, or wired headphones connect or disconnect.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary)
         }
     }
 }
