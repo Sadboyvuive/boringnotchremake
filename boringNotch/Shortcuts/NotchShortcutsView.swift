@@ -71,18 +71,7 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
     }
 
     var defaultTintHex: String {
-        switch self {
-        case .ejectDisks: return "#FF9F0A"
-        case .screenshot: return "#0A84FF"
-        case .screenRecord: return "#FF453A"
-        case .colorPicker: return "#BF5AF2"
-        case .toggleDarkMode: return "#5E5CE6"
-        case .lockScreen: return "#FF9F0A"
-        case .sleepDisplay: return "#64D2FF"
-        case .airDrop: return "#30D158"
-        case .emptyTrash: return "#8E8E93"
-        case .openShortcutsApp: return "#FF375F"
-        }
+        "#FFFFFF"
     }
 }
 
@@ -106,34 +95,20 @@ struct NotchShortcutItem: Codable, Identifiable, Hashable, Defaults.Serializable
             title: "Eject SSD",
             subtitle: "Safely remove",
             icon: "eject.fill",
-            tintHex: "#FF9F0A",
+            tintHex: "#FFFFFF",
             kind: .systemAction(.ejectDisks)
         ),
         NotchShortcutItem(
             title: "Screenshot",
             subtitle: "Copy area",
             icon: "camera.viewfinder",
-            tintHex: "#0A84FF",
+            tintHex: "#FFFFFF",
             kind: .systemAction(.screenshot)
         )
     ]
 
     var tintColor: Color {
-        Color(nsColor: NSColor(hexString: tintHex) ?? .controlAccentColor)
-    }
-}
-
-private extension NSColor {
-    convenience init?(hexString: String) {
-        var cleaned = hexString.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        if cleaned.hasPrefix("#") {
-            cleaned.removeFirst()
-        }
-        guard cleaned.count == 6, let rgb = UInt64(cleaned, radix: 16) else { return nil }
-        let r = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
-        let g = CGFloat((rgb & 0x00FF00) >> 8) / 255.0
-        let b = CGFloat(rgb & 0x0000FF) / 255.0
-        self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
+        Color.white
     }
 }
 
@@ -191,22 +166,20 @@ final class ShortcutManager: ObservableObject {
             title: action.defaultTitle,
             subtitle: action.defaultSubtitle,
             icon: action.defaultIcon,
-            tintHex: action.defaultTintHex,
+            tintHex: "#FFFFFF",
             kind: .systemAction(action)
         )
         updateSlot(at: slotIndex, with: item)
     }
 
     func setSlotToAppleShortcut(_ name: String, slotIndex: Int) {
-        let palette = ["#FF375F", "#0A84FF", "#30D158", "#BF5AF2", "#FF9F0A", "#5E5CE6"]
-        let tint = palette[abs(name.hashValue) % palette.count]
         let lower = name.lowercased()
         let icon = (lower.contains("eject") || lower.contains("ssd") || lower.contains("disk")) ? "eject.fill" : "bolt.fill"
         let item = NotchShortcutItem(
             title: name,
             subtitle: "Shortcut",
             icon: icon,
-            tintHex: tint,
+            tintHex: "#FFFFFF",
             kind: .appleShortcut(name: name)
         )
         updateSlot(at: slotIndex, with: item)
@@ -231,7 +204,7 @@ final class ShortcutManager: ObservableObject {
                     title: appName,
                     subtitle: "Open App",
                     icon: "app.fill",
-                    tintHex: "#0A84FF",
+                    tintHex: "#FFFFFF",
                     kind: .openApp(bundleIdentifier: bundleID, appPath: url.path)
                 )
                 self.updateSlot(at: slotIndex, with: newItem)
@@ -545,7 +518,7 @@ struct HomeQuickShortcutsView: View {
             if let banner = shortcutManager.statusBanner {
                 Text(banner)
                     .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(Color.green)
+                    .foregroundStyle(Color.white.opacity(0.85))
                     .lineLimit(1)
                     .transition(.opacity)
             }
@@ -574,16 +547,16 @@ private struct HomeShortcutSlotButton: View {
     var body: some View {
         Button(action: onRun) {
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(item.tintColor.opacity(isHovered ? 0.95 : 0.82))
-                            .frame(width: 24, height: 24)
+                            .fill(isHovered ? Color.white : Color.white.opacity(0.14))
+                            .frame(width: 26, height: 26)
 
                         if isRunning {
                             ProgressView()
                                 .controlSize(.mini)
-                                .tint(Color.white)
+                                .tint(isHovered ? Color.black : Color.white)
                         } else if case .openApp(let bundleID, let appPath) = item.kind,
                                   let iconImage = resolveAppIcon(bundleID: bundleID, path: appPath) {
                             Image(nsImage: iconImage)
@@ -592,20 +565,20 @@ private struct HomeShortcutSlotButton: View {
                                 .frame(width: 18, height: 18)
                         } else {
                             Image(systemName: item.icon)
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(Color.white)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(isHovered ? Color.black : Color.white)
                         }
                     }
 
                     if !isCompact {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(item.title)
-                                .font(.system(size: 11.5, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Color.white)
                                 .lineLimit(1)
                             Text(item.subtitle)
                                 .font(.system(size: 9.5))
-                                .foregroundStyle(Color.gray)
+                                .foregroundStyle(Color.white.opacity(0.55))
                                 .lineLimit(1)
                         }
                     }
@@ -621,21 +594,21 @@ private struct HomeShortcutSlotButton: View {
                             .lineLimit(1)
                         Text(item.subtitle)
                             .font(.system(size: 9, weight: .regular))
-                            .foregroundStyle(Color.gray)
+                            .foregroundStyle(Color.white.opacity(0.55))
                             .lineLimit(1)
                     }
                 }
             }
-            .padding(.horizontal, 9)
+            .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(Color.white.opacity(isHovered ? 0.14 : 0.07))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(isHovered ? 0.12 : 0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(item.tintColor.opacity(isHovered ? 0.55 : 0.18), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(isHovered ? 0.32 : 0.12), lineWidth: 1)
             )
             .scaleEffect(isHovered ? 1.02 : 1.0)
             .animation(.easeOut(duration: 0.14), value: isHovered)
