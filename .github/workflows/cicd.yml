@@ -75,14 +75,14 @@ jobs:
           hdiutil create -volname "Boring Notch" -srcfolder "Release/Boring Notch.app" -ov -format UDZO "Release/BoringNotch.dmg"
 
       - name: Upload BoringNotch-macOS.zip Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BoringNotch-macOS-zip
           path: Release/BoringNotch-macOS.zip
           retention-days: 30
 
       - name: Upload BoringNotch.dmg Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: BoringNotch-DMG
           path: Release/BoringNotch.dmg
