@@ -3,6 +3,8 @@ name: Build macOS App (No Xcode Local Needed)
 on:
   push:
     branches:
+      - main
+      - master
       - '*'
   pull_request:
     branches:
@@ -14,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -85,3 +87,15 @@ jobs:
           name: BoringNotch-DMG
           path: Release/BoringNotch.dmg
           retention-days: 30
+
+      - name: Publish to GitHub Releases
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: "Boring Notch (Shortcuts + Headphone Popups)"
+          body: "Bản build macOS tự động kèm tính năng **Shortcuts trên Notch** và **Popup cho Tai nghe**."
+          files: |
+            Release/BoringNotch.dmg
+            Release/BoringNotch-macOS.zip
+          prerelease: false
