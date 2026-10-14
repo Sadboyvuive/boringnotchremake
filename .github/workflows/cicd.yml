@@ -90,7 +90,7 @@ jobs:
 
       - name: Publish to GitHub Releases
         if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: latest-build
           name: "Boring Notch (Shortcuts + Headphone Popups)"
