@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 // MARK: - Models
 
 enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable, Defaults.Serializable {
+    case ejectDisks = "ejectDisks"
     case screenshot = "screenshot"
     case screenRecord = "screenRecord"
     case colorPicker = "colorPicker"
@@ -26,6 +27,7 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
 
     var defaultTitle: String {
         switch self {
+        case .ejectDisks: return "Eject SSD"
         case .screenshot: return "Screenshot"
         case .screenRecord: return "Screen Record"
         case .colorPicker: return "Color Picker"
@@ -40,6 +42,7 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
 
     var defaultSubtitle: String {
         switch self {
+        case .ejectDisks: return "Safely remove"
         case .screenshot: return "Copy area"
         case .screenRecord: return "Capture video"
         case .colorPicker: return "Copy HEX"
@@ -54,6 +57,7 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
 
     var defaultIcon: String {
         switch self {
+        case .ejectDisks: return "eject.fill"
         case .screenshot: return "camera.viewfinder"
         case .screenRecord: return "record.circle"
         case .colorPicker: return "eyedropper.halffull"
@@ -68,6 +72,7 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
 
     var defaultTintHex: String {
         switch self {
+        case .ejectDisks: return "#FF9F0A"
         case .screenshot: return "#0A84FF"
         case .screenRecord: return "#FF453A"
         case .colorPicker: return "#BF5AF2"
@@ -98,18 +103,18 @@ struct NotchShortcutItem: Codable, Identifiable, Hashable, Defaults.Serializable
 
     static let defaultItems: [NotchShortcutItem] = [
         NotchShortcutItem(
+            title: "Eject SSD",
+            subtitle: "Safely remove",
+            icon: "eject.fill",
+            tintHex: "#FF9F0A",
+            kind: .systemAction(.ejectDisks)
+        ),
+        NotchShortcutItem(
             title: "Screenshot",
             subtitle: "Copy area",
             icon: "camera.viewfinder",
             tintHex: "#0A84FF",
             kind: .systemAction(.screenshot)
-        ),
-        NotchShortcutItem(
-            title: "Dark Mode",
-            subtitle: "Switch theme",
-            icon: "moon.stars.fill",
-            tintHex: "#5E5CE6",
-            kind: .systemAction(.toggleDarkMode)
         )
     ]
 
@@ -195,10 +200,12 @@ final class ShortcutManager: ObservableObject {
     func setSlotToAppleShortcut(_ name: String, slotIndex: Int) {
         let palette = ["#FF375F", "#0A84FF", "#30D158", "#BF5AF2", "#FF9F0A", "#5E5CE6"]
         let tint = palette[abs(name.hashValue) % palette.count]
+        let lower = name.lowercased()
+        let icon = (lower.contains("eject") || lower.contains("ssd") || lower.contains("disk")) ? "eject.fill" : "bolt.fill"
         let item = NotchShortcutItem(
             title: name,
             subtitle: "Shortcut",
-            icon: "bolt.fill",
+            icon: icon,
             tintHex: tint,
             kind: .appleShortcut(name: name)
         )
@@ -386,6 +393,18 @@ final class ShortcutManager: ObservableObject {
 
     private func runSystemAction(_ action: SystemShortcutAction, slotIndex: Int, viewModel: BoringViewModel?) {
         switch action {
+        case .ejectDisks:
+            Task { @MainActor in
+                let script = """
+                tell application "Finder"
+                    eject (every disk whose ejectable is true)
+                end tell
+                """
+                _ = try? await AppleScriptHelper.executeVoid(script)
+                self.runningSlotIndex = nil
+                self.showBanner("SSD / Disks Ejected")
+            }
+
         case .screenshot:
             viewModel?.close()
             Task { @MainActor in
