@@ -1,0 +1,87 @@
+name: Build macOS App (No Xcode Local Needed)
+
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    branches:
+      - '*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Boring Notch (.app, .zip & .dmg)
+    runs-on: macos-15
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          if ls -d /Applications/Xcode_16*.app >/dev/null 2>&1; then
+            XCODE_APP=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -n 1)
+            sudo xcode-select -s "$XCODE_APP"
+          fi
+          xcodebuild -version
+
+      - name: Resolve Swift Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project boringNotch.xcodeproj \
+            -scheme boringNotch
+
+      - name: Compile Release App (Ad-hoc / No Certificate Required)
+        run: |
+          xcodebuild build \
+            -project boringNotch.xcodeproj \
+            -scheme boringNotch \
+            -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM=""
+
+      - name: Ad-hoc Sign and Package (.zip & .dmg)
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find "$RUNNER_TEMP/DerivedData/Build/Products/Release" -maxdepth 1 -name "*.app" -print -quit)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "::error::Could not find compiled .app bundle"
+            exit 1
+          fi
+          mkdir -p Release
+          cp -R "$APP_PATH" "Release/Boring Notch.app"
+
+          if [[ -d "Release/Boring Notch.app/Contents/XPCServices" ]]; then
+            find "Release/Boring Notch.app/Contents/XPCServices" -name "*.xpc" -print0 | xargs -0 -I {} codesign --force --sign - "{}"
+          fi
+          if [[ -d "Release/Boring Notch.app/Contents/Frameworks" ]]; then
+            find "Release/Boring Notch.app/Contents/Frameworks" \( -name "*.framework" -o -name "*.dylib" \) -print0 | xargs -0 -I {} codesign --force --sign - "{}"
+          fi
+          codesign --force --deep --sign - "Release/Boring Notch.app"
+
+          ditto -c -k --sequesterRsrc --keepParent "Release/Boring Notch.app" "Release/BoringNotch-macOS.zip"
+          hdiutil create -volname "Boring Notch" -srcfolder "Release/Boring Notch.app" -ov -format UDZO "Release/BoringNotch.dmg"
+
+      - name: Upload BoringNotch-macOS.zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoringNotch-macOS-zip
+          path: Release/BoringNotch-macOS.zip
+          retention-days: 30
+
+      - name: Upload BoringNotch.dmg Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoringNotch-DMG
+          path: Release/BoringNotch.dmg
+          retention-days: 30
