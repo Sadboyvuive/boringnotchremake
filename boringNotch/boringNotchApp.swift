@@ -223,9 +223,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let uuid = screen.displayUUID else { return }
         
         if Defaults[.showOnAllDisplays], let viewModel = viewModels[uuid] {
+            guard !viewModel.hideOnClosed else { return }
             viewModel.open()
             coordinator.currentView = .shelf
         } else if !Defaults[.showOnAllDisplays], let windowScreen = window?.screen, screen == windowScreen {
+            guard !vm.hideOnClosed else { return }
             vm.open()
             coordinator.currentView = .shelf
         }
@@ -276,7 +278,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 x: screenFrame.origin.x + (screenFrame.width / 2) - window.frame.width / 2,
                 y: screenFrame.origin.y + screenFrame.height - window.frame.height
             ))
-        window.alphaValue = 1
+        window.alphaValue = vm.hideOnClosed ? 0 : 1
+        window.ignoresMouseEvents = vm.hideOnClosed
+    }
+
+    @MainActor
+    private func updateFullscreenWindowVisibility() {
+        if Defaults[.showOnAllDisplays] {
+            for (uuid, win) in windows {
+                let hidden = viewModels[uuid]?.hideOnClosed ?? false
+                win.ignoresMouseEvents = hidden
+                win.alphaValue = hidden ? 0 : 1
+            }
+        } else if let win = window {
+            let hidden = vm.hideOnClosed
+            win.ignoresMouseEvents = hidden
+            win.alphaValue = hidden ? 0 : 1
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -311,7 +329,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             guard let self = self, let window = self.window else { return }
             Task { @MainActor in
-                window.alphaValue = self.coordinator.selectedScreenUUID == self.coordinator.preferredScreenUUID ? 1 : 0
+                let shouldShow = (self.coordinator.selectedScreenUUID == self.coordinator.preferredScreenUUID) && !self.vm.hideOnClosed
+                window.alphaValue = shouldShow ? 1 : 0
             }
         }
 
@@ -331,6 +350,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.setupDragDetectors()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .notchFullscreenVisibilityChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateFullscreenWindowVisibility()
             }
         }
 
@@ -406,30 +433,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await MainActor.run {
                         viewModel.close()
                     }
-                }
-            }
-        }
-
-        KeyboardShortcuts.onKeyDown(for: .toggleShortcutsTab) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                var viewModel = self.vm
-                let mouseLocation = NSEvent.mouseLocation
-                if Defaults[.showOnAllDisplays] {
-                    for screen in NSScreen.screens where screen.frame.contains(mouseLocation) {
-                        if let uuid = screen.displayUUID, let screenViewModel = self.viewModels[uuid] {
-                            viewModel = screenViewModel
-                            break
-                        }
-                    }
-                }
-                self.closeNotchTask?.cancel()
-                self.closeNotchTask = nil
-                if viewModel.notchState == .open && self.coordinator.currentView == .shortcuts {
-                    viewModel.close()
-                } else {
-                    self.coordinator.currentView = .shortcuts
-                    viewModel.open()
                 }
             }
         }
@@ -601,7 +604,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     step: step,
                     onFinish: {
                         window.orderOut(nil)
-//                        NSApp.setActivationPolicy(.accessory)
                         window.close()
                         NSApp.deactivate()
                     },
@@ -616,7 +618,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onboardingWindowController = NSWindowController(window: window)
         }
 
-//        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         onboardingWindowController?.window?.makeKeyAndOrderFront(nil)
         onboardingWindowController?.window?.orderFrontRegardless()

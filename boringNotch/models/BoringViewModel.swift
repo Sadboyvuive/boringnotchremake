@@ -5,9 +5,15 @@
 //  Created by Harsh Vardhan  Goswami  on 04/08/24.
 //
 
+import AppKit
 import Combine
+import CoreGraphics
 import Defaults
 import SwiftUI
+
+extension Notification.Name {
+    static let notchFullscreenVisibilityChanged = Notification.Name("notchFullscreenVisibilityChanged")
+}
 
 class BoringViewModel: NSObject, ObservableObject {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
@@ -26,7 +32,16 @@ class BoringViewModel: NSObject, ObservableObject {
     @Published var anyDropZoneTargeting: Bool = false
     var cancellables: Set<AnyCancellable> = []
     
-    @Published var hideOnClosed: Bool = true
+    @Published var hideOnClosed: Bool = false {
+        didSet {
+            if oldValue != hideOnClosed {
+                if hideOnClosed && notchState == .open {
+                    close()
+                }
+                NotificationCenter.default.post(name: .notchFullscreenVisibilityChanged, object: nil)
+            }
+        }
+    }
 
     @Published var edgeAutoOpenActive: Bool = false
     @Published var isHoveringCalendar: Bool = false
@@ -70,27 +85,30 @@ class BoringViewModel: NSObject, ObservableObject {
     }
     
     private func setupDetectorObserver() {
-        // Publisher for the user’s fullscreen detection setting
         let enabledPublisher = Defaults
             .publisher(.hideNotchOption)
             .map(\.newValue)
             .map { $0 != .never }
             .removeDuplicates()
 
-        // Publisher for the current screen UUID (non-nil, distinct)
         let screenPublisher = $screenUUID
             .compactMap { $0 }
             .removeDuplicates()
 
-        // Publisher for fullscreen status dictionary
         let fullscreenStatusPublisher = detector.$fullscreenStatus
             .removeDuplicates()
 
-        // Combine all three: screen UUID, fullscreen status, and enabled setting
-        Publishers.CombineLatest3(screenPublisher, fullscreenStatusPublisher, enabledPublisher)
-            .map { screenUUID, fullscreenStatus, enabled in
-                let isFullscreen = fullscreenStatus[screenUUID] ?? false
-                return enabled && isFullscreen
+        let timerPublisher = Timer.publish(every: 0.75, on: .main, in: .common)
+            .autoconnect()
+            .map { _ in () }
+            .prepend(())
+
+        Publishers.CombineLatest4(screenPublisher, fullscreenStatusPublisher, enabledPublisher, timerPublisher)
+            .map { [weak self] screenUUID, fullscreenStatus, enabled, _ in
+                guard enabled else { return false }
+                let detectorFullscreen = fullscreenStatus[screenUUID] ?? false
+                let gameOrBorderlessFullscreen = self?.isFrontmostAppFullscreenOrGame(screenUUID: screenUUID) ?? false
+                return detectorFullscreen || gameOrBorderlessFullscreen
             }
             .removeDuplicates()
             .receive(on: RunLoop.main)
@@ -100,17 +118,96 @@ class BoringViewModel: NSObject, ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                let enabled = Defaults[.hideNotchOption] != .never
+                guard enabled else {
+                    if self.hideOnClosed { self.hideOnClosed = false }
+                    return
+                }
+                let uuid = self.screenUUID ?? NSScreen.main?.displayUUID ?? ""
+                let detectorFS = self.detector.fullscreenStatus[uuid] ?? false
+                let activeFS = self.isFrontmostAppFullscreenOrGame(screenUUID: uuid)
+                let shouldHide = detectorFS || activeFS
+                if self.hideOnClosed != shouldHide {
+                    withAnimation(.smooth) {
+                        self.hideOnClosed = shouldHide
+                    }
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func isFrontmostAppFullscreenOrGame(screenUUID: String?) -> Bool {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return false }
+        let bundleID = (frontApp.bundleIdentifier ?? "").lowercased()
+        let appName = (frontApp.localizedName ?? "").lowercased()
+        let exeName = (frontApp.executableURL?.lastPathComponent ?? "").lowercased()
+
+        if bundleID.contains("boringnotch") || bundleID == "com.apple.finder" || bundleID == "com.apple.dock" {
+            return false
+        }
+
+        // Direct detection for League of Legends game client & fullscreen Wine/Sikarugir games
+        if bundleID.contains("leagueoflegends.gameclient") ||
+           bundleID.contains("com.riotgames.leagueoflegends") ||
+           exeName == "leagueoflegends" ||
+           appName == "league of legends" {
+            return true
+        }
+
+        let targetScreen = screenUUID.flatMap { NSScreen.screen(withUUID: $0) } ?? NSScreen.main
+        guard let screen = targetScreen else { return false }
+        let screenFrame = screen.frame
+
+        // Check if the frontmost app has a borderless/fullscreen window covering the display
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+
+        let frontPID = frontApp.processIdentifier
+        for entry in windowList {
+            guard let ownerPID = entry[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == frontPID,
+                  let boundsDict = entry[kCGWindowBounds as String] as? [String: CGFloat],
+                  let w = boundsDict["Width"],
+                  let h = boundsDict["Height"] else {
+                continue
+            }
+
+            let layer = entry[kCGWindowLayer as String] as? Int ?? 0
+            // Ignore tiny overlay/status bar windows
+            if w >= screenFrame.width - 4 && h >= screenFrame.height - 4 && layer >= 0 {
+                return true
+            }
+            // Also catch notched MacBook fullscreen games that span below the notch (height >= visibleFrame.height and width == screenFrame.width)
+            let isGameOrWine = bundleID.contains("riotgames") ||
+                               bundleID.contains("leagueoflegends") ||
+                               exeName.contains("wine") ||
+                               exeName.contains("sikarugir") ||
+                               appName.contains("league")
+            if isGameOrWine && w >= screenFrame.width - 4 && h >= screen.visibleFrame.height - 4 {
+                return true
+            }
+        }
+
+        return false
     }
 
     // Computed property for effective notch height
     var effectiveClosedNotchHeight: CGFloat {
-        let currentScreen = screenUUID.flatMap { NSScreen.screen(withUUID: $0) }
-        let noNotchAndFullscreen = hideOnClosed && (currentScreen?.safeAreaInsets.top ?? 0 <= 0 || currentScreen == nil)
-        return noNotchAndFullscreen ? 0 : closedNotchSize.height
+        if hideOnClosed {
+            return 0
+        }
+        return closedNotchSize.height
     }
 
     var chinHeight: CGFloat {
-        if !Defaults[.hideTitleBar] {
+        if !Defaults[.hideTitleBar] || hideOnClosed {
             return 0
         }
 
@@ -190,6 +287,7 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func open() {
+        guard !hideOnClosed else { return }
         self.notchSize = openNotchSize
         self.notchState = .open
         
@@ -199,7 +297,7 @@ class BoringViewModel: NSObject, ObservableObject {
 
     func close() {
         // Do not close while a share picker or sharing service is active
-        if SharingStateManager.shared.preventNotchClose {
+        if SharingStateManager.shared.preventNotchClose && !hideOnClosed {
             return
         }
         self.notchSize = getClosedNotchSize(screenUUID: self.screenUUID)
@@ -209,9 +307,7 @@ class BoringViewModel: NSObject, ObservableObject {
         self.coordinator.sneakPeek.show = false
         self.edgeAutoOpenActive = false
 
-        // Set the current view to shelf if it contains files and the user enables openShelfByDefault
-        // Otherwise, if the user has not enabled openLastShelfByDefault, set the view to home
-    if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
+        if !ShelfStateViewModel.shared.isEmpty && Defaults[.openShelfByDefault] {
             coordinator.currentView = .shelf
         } else if !coordinator.openLastTabByDefault {
             coordinator.currentView = .home

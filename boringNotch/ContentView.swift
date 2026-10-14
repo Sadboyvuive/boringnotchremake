@@ -118,11 +118,13 @@ struct ContentView: View {
                     )
                     .padding(
                         .bottom,
-                        vm.effectiveClosedNotchHeight == 0 ? 10 : 0
+                        (vm.effectiveClosedNotchHeight == 0 && !vm.hideOnClosed) ? 10 : 0
                     )
                 
                 mainLayout
-                    .frame(height: vm.notchState == .open ? vm.notchSize.height : nil)
+                    .frame(height: vm.notchState == .open ? vm.notchSize.height : (vm.hideOnClosed ? 0 : nil))
+                    .opacity(vm.hideOnClosed && vm.notchState == .closed ? 0 : 1)
+                    .allowsHitTesting(!vm.hideOnClosed)
                     .conditionalModifier(true) { view in
                         let openAnimation = Animation.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)
                         let closeAnimation = Animation.spring(response: 0.45, dampingFraction: 1.0, blendDuration: 0)
@@ -193,13 +195,8 @@ struct ContentView: View {
                             }
                         }
                         .keyboardShortcut(KeyEquivalent(","), modifiers: .command)
-                        //                    Button("Edit") { // Doesnt work....
-                        //                        let dn = DynamicNotch(content: EditPanelView())
-                        //                        dn.toggle()
-                        //                    }
-                        //                    .keyboardShortcut("E", modifiers: .command)
                     }
-                if vm.chinHeight > 0 {
+                if vm.chinHeight > 0 && !vm.hideOnClosed {
                     Rectangle()
                         .fill(Color.black.opacity(0.01))
                         .frame(width: computedChinWidth, height: vm.chinHeight)
@@ -220,6 +217,7 @@ struct ContentView: View {
         .environmentObject(vm)
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
+            guard !vm.hideOnClosed else { return }
 
             if isTargeted {
                 if vm.notchState == .closed {
@@ -262,7 +260,7 @@ struct ContentView: View {
                     Spacer()
                 } else {
                     if coordinator.expandingView.type == .battery && coordinator.expandingView.show
-                        && vm.notchState == .closed && Defaults[.showPowerStatusNotifications]
+                        && vm.notchState == .closed && Defaults[.showPowerStatusNotifications] && !vm.hideOnClosed
                     {
                         HStack(spacing: 0) {
                             HStack {
@@ -288,7 +286,7 @@ struct ContentView: View {
                             .frame(width: 76, alignment: .trailing)
                         }
                         .frame(height: vm.effectiveClosedNotchHeight, alignment: .center)
-                      } else if coordinator.expandingView.type == .headphone && coordinator.expandingView.show && vm.notchState == .closed {
+                      } else if coordinator.expandingView.type == .headphone && coordinator.expandingView.show && vm.notchState == .closed && !vm.hideOnClosed {
                         if Defaults[.headphonePopupStyle] == .inline {
                             HeadphoneInlineBarView(
                                 closedNotchWidth: vm.closedNotchSize.width,
@@ -299,7 +297,7 @@ struct ContentView: View {
                                 .fill(.clear)
                                 .frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
                         }
-                      } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
+                      } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed && !vm.hideOnClosed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
@@ -315,13 +313,13 @@ struct ContentView: View {
                            Rectangle().fill(.clear).frame(width: vm.closedNotchSize.width - 20, height: vm.effectiveClosedNotchHeight)
                        }
 
-                      if coordinator.expandingView.type == .headphone && coordinator.expandingView.show && vm.notchState == .closed && Defaults[.headphonePopupStyle] == .card {
+                      if coordinator.expandingView.type == .headphone && coordinator.expandingView.show && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.headphonePopupStyle] == .card {
                           HeadphonePopupCardView()
                               .padding(.bottom, 8)
                               .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .top)))
                       }
 
-                      if coordinator.sneakPeek.show {
+                      if coordinator.sneakPeek.show && !vm.hideOnClosed {
                           if (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && !Defaults[.inlineHUD] && vm.notchState == .closed {
                               SystemEventIndicatorModifier(
                                   eventType: $coordinator.sneakPeek.type,
@@ -358,7 +356,7 @@ struct ContentView: View {
                       }
                   }
               }
-              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed)) || (coordinator.expandingView.show && coordinator.expandingView.type == .headphone && vm.notchState == .closed && Defaults[.headphonePopupStyle] == .card)) { view in
+              .conditionalModifier((coordinator.sneakPeek.show && (coordinator.sneakPeek.type == .music) && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.sneakPeekStyles] == .standard) || (coordinator.sneakPeek.show && (coordinator.sneakPeek.type != .music) && (vm.notchState == .closed) && !vm.hideOnClosed) || (coordinator.expandingView.show && coordinator.expandingView.type == .headphone && vm.notchState == .closed && !vm.hideOnClosed && Defaults[.headphonePopupStyle] == .card)) { view in
                   view
                       .fixedSize()
               }
@@ -370,8 +368,6 @@ struct ContentView: View {
                         NotchHomeView(albumArtNamespace: albumArtNamespace)
                     case .shelf:
                         ShelfView()
-                    case .shortcuts:
-                        NotchShortcutsView()
                     }
                 }
                 .transition(
@@ -511,7 +507,7 @@ struct ContentView: View {
 
     @ViewBuilder
     var dragDetector: some View {
-        if Defaults[.boringShelf] && vm.notchState == .closed {
+        if Defaults[.boringShelf] && vm.notchState == .closed && !vm.hideOnClosed {
             Color.clear
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -526,6 +522,7 @@ struct ContentView: View {
     }
 
     private func doOpen() {
+        guard !vm.hideOnClosed else { return }
         withAnimation(animationSpring) {
             vm.open()
         }
@@ -534,7 +531,7 @@ struct ContentView: View {
     // MARK: - Hover Management
 
     private func handleHover(_ hovering: Bool) {
-        if coordinator.firstLaunch { return }
+        if coordinator.firstLaunch || vm.hideOnClosed { return }
         hoverTask?.cancel()
         
         if hovering {
@@ -547,6 +544,7 @@ struct ContentView: View {
             }
             
             guard vm.notchState == .closed,
+                  !vm.hideOnClosed,
                   !coordinator.sneakPeek.show,
                   Defaults[.openNotchOnHover] else { return }
             
@@ -556,6 +554,7 @@ struct ContentView: View {
                 
                 await MainActor.run {
                     guard self.vm.notchState == .closed,
+                          !self.vm.hideOnClosed,
                           self.isHovering,
                           !self.coordinator.sneakPeek.show else { return }
                     
@@ -583,7 +582,7 @@ struct ContentView: View {
     // MARK: - Gesture Handling
 
     private func handleDownGesture(translation: CGFloat, phase: NSEvent.Phase) {
-        guard vm.notchState == .closed else { return }
+        guard vm.notchState == .closed, !vm.hideOnClosed else { return }
 
         if phase == .ended {
             withAnimation(animationSpring) { gestureProgress = .zero }

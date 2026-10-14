@@ -5,36 +5,26 @@
 //  Created by Hugo Persson on 2024-08-25.
 //
 
-import Defaults
 import SwiftUI
 
 struct TabModel: Identifiable {
-    var id: NotchViews { view }
+    let id = UUID()
     let label: String
     let icon: String
     let view: NotchViews
 }
 
+let tabs = [
+    TabModel(label: "Home", icon: "house.fill", view: .home),
+    TabModel(label: "Shelf", icon: "tray.fill", view: .shelf)
+]
+
 struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
-    @Default(.boringShelf) var boringShelf
-    @Default(.boringShortcuts) var boringShortcuts
     @Namespace var animation
-
-    private var availableTabs: [TabModel] {
-        var list = [TabModel(label: "Home", icon: "house.fill", view: .home)]
-        if boringShelf {
-            list.append(TabModel(label: "Shelf", icon: "tray.fill", view: .shelf))
-        }
-        if boringShortcuts {
-            list.append(TabModel(label: "Shortcuts", icon: "bolt.fill", view: .shortcuts))
-        }
-        return list
-    }
-
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(availableTabs) { tab in
+            ForEach(tabs) { tab in
                 TabButton(label: tab.label, icon: tab.icon, selected: coordinator.currentView == tab.view) {
                     withAnimation(.smooth) {
                         coordinator.currentView = tab.view

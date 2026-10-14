@@ -1743,7 +1743,6 @@ struct Shortcuts: View {
             }
             Section {
                 KeyboardShortcuts.Recorder("Toggle Notch Open:", name: .toggleNotchOpen)
-                KeyboardShortcuts.Recorder("Toggle Shortcuts Tab:", name: .toggleShortcutsTab)
             } header: {
                 Text("Global Hotkeys")
             }

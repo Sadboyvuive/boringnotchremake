@@ -114,7 +114,7 @@ extension Defaults.Keys {
 
     static let showNotHumanFace = Key<Bool>("showNotHumanFace", default: false)
     static let tileShowLabels = Key<Bool>("tileShowLabels", default: false)
-    static let showCalendar = Key<Bool>("showCalendar", default: false)
+    static let showCalendar = Key<Bool>("showCalendar", default: true)
     static let hideCompletedReminders = Key<Bool>("hideCompletedReminders", default: true)
     static let sliderColor = Key<SliderColorEnum>(
         "sliderUseAlbumArtColor",
@@ -179,8 +179,10 @@ extension Defaults.Keys {
     static let autoRemoveShelfItems = Key<Bool>("autoRemoveShelfItems", default: false)
     static let expandedDragDetection = Key<Bool>("expandedDragDetection", default: true)
 
-    // MARK: Notch Shortcuts
+    // MARK: Home Quick Shortcuts (in 'No events today' area)
     static let boringShortcuts = Key<Bool>("boringShortcuts", default: true)
+    static let homeShortcutCount = Key<Int>("homeShortcutCount", default: 2)
+    static let alwaysShowHomeShortcuts = Key<Bool>("alwaysShowHomeShortcuts", default: false)
     static let closeNotchOnShortcutRun = Key<Bool>("closeNotchOnShortcutRun", default: true)
     static let notchShortcutItems = Key<[NotchShortcutItem]>("notchShortcutItems", default: NotchShortcutItem.defaultItems)
 
@@ -198,7 +200,7 @@ extension Defaults.Keys {
     static let autoScrollToNextEvent = Key<Bool>("autoScrollToNextEvent", default: true)
     
     // MARK: Fullscreen Media Detection
-    static let hideNotchOption = Key<HideNotchOption>("hideNotchOption", default: .nowPlayingOnly)
+    static let hideNotchOption = Key<HideNotchOption>("hideNotchOption", default: .always)
     
     // MARK: Media Controller
     static let mediaController = Key<MediaControllerType>("mediaController", default: defaultMediaController)

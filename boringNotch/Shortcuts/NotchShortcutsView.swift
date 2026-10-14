@@ -38,6 +38,20 @@ enum SystemShortcutAction: String, Codable, CaseIterable, Identifiable, Hashable
         }
     }
 
+    var defaultSubtitle: String {
+        switch self {
+        case .screenshot: return "Copy area"
+        case .screenRecord: return "Capture video"
+        case .colorPicker: return "Copy HEX"
+        case .toggleDarkMode: return "Switch theme"
+        case .lockScreen: return "Screen saver"
+        case .sleepDisplay: return "Turn off screen"
+        case .airDrop: return "Quick share"
+        case .emptyTrash: return "Clean Finder"
+        case .openShortcutsApp: return "macOS Shortcuts"
+        }
+    }
+
     var defaultIcon: String {
         switch self {
         case .screenshot: return "camera.viewfinder"
@@ -85,59 +99,17 @@ struct NotchShortcutItem: Codable, Identifiable, Hashable, Defaults.Serializable
     static let defaultItems: [NotchShortcutItem] = [
         NotchShortcutItem(
             title: "Screenshot",
-            subtitle: "Copy selection",
+            subtitle: "Copy area",
             icon: "camera.viewfinder",
             tintHex: "#0A84FF",
             kind: .systemAction(.screenshot)
         ),
         NotchShortcutItem(
-            title: "Color Picker",
-            subtitle: "Copy HEX color",
-            icon: "eyedropper.halffull",
-            tintHex: "#BF5AF2",
-            kind: .systemAction(.colorPicker)
-        ),
-        NotchShortcutItem(
             title: "Dark Mode",
-            subtitle: "Toggle theme",
+            subtitle: "Switch theme",
             icon: "moon.stars.fill",
             tintHex: "#5E5CE6",
             kind: .systemAction(.toggleDarkMode)
-        ),
-        NotchShortcutItem(
-            title: "Screen Record",
-            subtitle: "Capture video",
-            icon: "record.circle",
-            tintHex: "#FF453A",
-            kind: .systemAction(.screenRecord)
-        ),
-        NotchShortcutItem(
-            title: "AirDrop",
-            subtitle: "Quick share",
-            icon: "airplayaudio",
-            tintHex: "#30D158",
-            kind: .systemAction(.airDrop)
-        ),
-        NotchShortcutItem(
-            title: "Lock Screen",
-            subtitle: "Screen saver",
-            icon: "lock.fill",
-            tintHex: "#FF9F0A",
-            kind: .systemAction(.lockScreen)
-        ),
-        NotchShortcutItem(
-            title: "Sleep Display",
-            subtitle: "Turn off screen",
-            icon: "moon.zzz.fill",
-            tintHex: "#64D2FF",
-            kind: .systemAction(.sleepDisplay)
-        ),
-        NotchShortcutItem(
-            title: "Shortcuts App",
-            subtitle: "Open macOS app",
-            icon: "bolt.fill",
-            tintHex: "#FF375F",
-            kind: .systemAction(.openShortcutsApp)
         )
     ]
 
@@ -168,17 +140,99 @@ final class ShortcutManager: ObservableObject {
 
     @Published private(set) var availableAppleShortcuts: [String] = []
     @Published private(set) var isLoadingShortcuts: Bool = false
-    @Published private(set) var runningItemID: UUID?
-    @Published private(set) var runningShortcutName: String?
+    @Published private(set) var runningSlotIndex: Int?
     @Published var statusBanner: String?
 
     private var bannerClearTask: Task<Void, Never>?
 
     private init() {
+        ensureTwoSlots()
         refreshAppleShortcuts()
     }
 
-    func showBanner(_ message: String, duration: TimeInterval = 2.4) {
+    func ensureTwoSlots() {
+        var items = Defaults[.notchShortcutItems]
+        if items.isEmpty {
+            items = NotchShortcutItem.defaultItems
+            Defaults[.notchShortcutItems] = items
+        } else if items.count == 1 {
+            items.append(NotchShortcutItem.defaultItems[1])
+            Defaults[.notchShortcutItems] = items
+        }
+    }
+
+    func slotItem(at index: Int) -> NotchShortcutItem {
+        ensureTwoSlots()
+        let items = Defaults[.notchShortcutItems]
+        if index >= 0 && index < items.count {
+            return items[index]
+        }
+        return NotchShortcutItem.defaultItems[min(index, 1)]
+    }
+
+    func updateSlot(at index: Int, with item: NotchShortcutItem) {
+        ensureTwoSlots()
+        var items = Defaults[.notchShortcutItems]
+        if index >= 0 && index < items.count {
+            items[index] = item
+        } else {
+            items.append(item)
+        }
+        Defaults[.notchShortcutItems] = items
+    }
+
+    func setSlotToSystemAction(_ action: SystemShortcutAction, slotIndex: Int) {
+        let item = NotchShortcutItem(
+            title: action.defaultTitle,
+            subtitle: action.defaultSubtitle,
+            icon: action.defaultIcon,
+            tintHex: action.defaultTintHex,
+            kind: .systemAction(action)
+        )
+        updateSlot(at: slotIndex, with: item)
+    }
+
+    func setSlotToAppleShortcut(_ name: String, slotIndex: Int) {
+        let palette = ["#FF375F", "#0A84FF", "#30D158", "#BF5AF2", "#FF9F0A", "#5E5CE6"]
+        let tint = palette[abs(name.hashValue) % palette.count]
+        let item = NotchShortcutItem(
+            title: name,
+            subtitle: "Shortcut",
+            icon: "bolt.fill",
+            tintHex: tint,
+            kind: .appleShortcut(name: name)
+        )
+        updateSlot(at: slotIndex, with: item)
+    }
+
+    func pickAppForSlot(_ slotIndex: Int) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose an Application for Shortcut Button \(slotIndex + 1)"
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+
+        SharingStateManager.shared.preventNotchClose = true
+        panel.begin { response in
+            Task { @MainActor in
+                SharingStateManager.shared.preventNotchClose = false
+                guard response == .OK, let url = panel.url else { return }
+                let appName = url.deletingPathExtension().lastPathComponent
+                let bundleID = Bundle(url: url)?.bundleIdentifier ?? ""
+                let newItem = NotchShortcutItem(
+                    title: appName,
+                    subtitle: "Open App",
+                    icon: "app.fill",
+                    tintHex: "#0A84FF",
+                    kind: .openApp(bundleIdentifier: bundleID, appPath: url.path)
+                )
+                self.updateSlot(at: slotIndex, with: newItem)
+            }
+        }
+    }
+
+    func showBanner(_ message: String, duration: TimeInterval = 2.0) {
         bannerClearTask?.cancel()
         withAnimation(.smooth(duration: 0.2)) {
             statusBanner = message
@@ -251,62 +305,16 @@ final class ShortcutManager: ObservableObject {
         return result
     }
 
-    func isAppleShortcutPinned(_ name: String) -> Bool {
-        Defaults[.notchShortcutItems].contains { item in
-            if case .appleShortcut(let pinnedName) = item.kind {
-                return pinnedName == name
-            }
-            return false
-        }
-    }
-
-    func togglePinAppleShortcut(_ name: String) {
-        var items = Defaults[.notchShortcutItems]
-        if let idx = items.firstIndex(where: {
-            if case .appleShortcut(let pinnedName) = $0.kind {
-                return pinnedName == name
-            }
-            return false
-        }) {
-            items.remove(at: idx)
-            Defaults[.notchShortcutItems] = items
-            showBanner("Unpinned \"\(name)\"")
-        } else {
-            let palette = ["#FF375F", "#0A84FF", "#30D158", "#BF5AF2", "#FF9F0A", "#5E5CE6", "#64D2FF"]
-            let colorHex = palette[abs(name.hashValue) % palette.count]
-            let newItem = NotchShortcutItem(
-                title: name,
-                subtitle: "Mac Shortcut",
-                icon: "bolt.fill",
-                tintHex: colorHex,
-                kind: .appleShortcut(name: name)
-            )
-            items.append(newItem)
-            Defaults[.notchShortcutItems] = items
-            showBanner("Pinned \"\(name)\"")
-        }
-    }
-
-    func removeShortcutItem(_ item: NotchShortcutItem) {
-        var items = Defaults[.notchShortcutItems]
-        items.removeAll { $0.id == item.id }
-        Defaults[.notchShortcutItems] = items
-    }
-
-    func resetToDefaultShortcuts() {
-        Defaults[.notchShortcutItems] = NotchShortcutItem.defaultItems
-        showBanner("Reset shortcuts to defaults")
-    }
-
-    func run(_ item: NotchShortcutItem, viewModel: BoringViewModel? = nil) {
-        runningItemID = item.id
+    func run(slotIndex: Int, viewModel: BoringViewModel? = nil) {
+        let item = slotItem(at: slotIndex)
+        runningSlotIndex = slotIndex
 
         switch item.kind {
         case .appleShortcut(let name):
-            runAppleShortcut(named: name, itemID: item.id, viewModel: viewModel)
+            runAppleShortcut(named: name, slotIndex: slotIndex, viewModel: viewModel)
 
         case .systemAction(let action):
-            runSystemAction(action, itemID: item.id, viewModel: viewModel)
+            runSystemAction(action, slotIndex: slotIndex, viewModel: viewModel)
 
         case .openApp(let bundleID, let appPath):
             if Defaults[.closeNotchOnShortcutRun] {
@@ -318,7 +326,7 @@ final class ShortcutManager: ObservableObject {
                       let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
                 NSWorkspace.shared.open(appURL)
             }
-            runningItemID = nil
+            runningSlotIndex = nil
             showBanner("Opened \(item.title)")
 
         case .openURL(let urlString):
@@ -329,16 +337,13 @@ final class ShortcutManager: ObservableObject {
                 NSWorkspace.shared.open(url)
                 showBanner("Opened \(item.title)")
             }
-            runningItemID = nil
+            runningSlotIndex = nil
         }
     }
 
-    func runAppleShortcut(named name: String, itemID: UUID? = nil, viewModel: BoringViewModel? = nil) {
-        runningShortcutName = name
-        if let itemID {
-            runningItemID = itemID
-        }
-        showBanner("Running \"\(name)\"…")
+    func runAppleShortcut(named name: String, slotIndex: Int? = nil, viewModel: BoringViewModel? = nil) {
+        runningSlotIndex = slotIndex
+        showBanner("Running \(name)…")
 
         Task.detached(priority: .userInitiated) {
             let ranCLI = Self.executeShortcutViaCLI(named: name)
@@ -353,9 +358,8 @@ final class ShortcutManager: ObservableObject {
                 }
             }
             await MainActor.run {
-                self.runningItemID = nil
-                self.runningShortcutName = nil
-                self.showBanner("Finished \"\(name)\"")
+                self.runningSlotIndex = nil
+                self.showBanner("Done!")
                 if Defaults[.closeNotchOnShortcutRun] {
                     viewModel?.close()
                 }
@@ -380,7 +384,7 @@ final class ShortcutManager: ObservableObject {
         }
     }
 
-    private func runSystemAction(_ action: SystemShortcutAction, itemID: UUID, viewModel: BoringViewModel?) {
+    private func runSystemAction(_ action: SystemShortcutAction, slotIndex: Int, viewModel: BoringViewModel?) {
         switch action {
         case .screenshot:
             viewModel?.close()
@@ -393,8 +397,7 @@ final class ShortcutManager: ObservableObject {
                     try? proc.run()
                     proc.waitUntilExit()
                     await MainActor.run {
-                        self.runningItemID = nil
-                        self.showBanner("Screenshot copied to clipboard")
+                        self.runningSlotIndex = nil
                     }
                 }
             }
@@ -405,8 +408,7 @@ final class ShortcutManager: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(200))
                 let screenshotAppURL = URL(fileURLWithPath: "/System/Applications/Utilities/Screenshot.app")
                 NSWorkspace.shared.open(screenshotAppURL)
-                self.runningItemID = nil
-                self.showBanner("Opened Screen Recorder")
+                self.runningSlotIndex = nil
             }
 
         case .colorPicker:
@@ -414,7 +416,7 @@ final class ShortcutManager: ObservableObject {
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(220))
                 let selectedColor = await NSColorSampler().sample()
-                self.runningItemID = nil
+                self.runningSlotIndex = nil
                 guard let rgb = selectedColor?.usingColorSpace(.sRGB) else { return }
                 let r = Int(round(rgb.redComponent * 255))
                 let g = Int(round(rgb.greenComponent * 255))
@@ -423,8 +425,7 @@ final class ShortcutManager: ObservableObject {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(hex, forType: .string)
                 viewModel?.open()
-                BoringViewCoordinator.shared.currentView = .shortcuts
-                self.showBanner("Copied \(hex) to clipboard")
+                self.showBanner("Copied \(hex)")
             }
 
         case .toggleDarkMode:
@@ -437,8 +438,8 @@ final class ShortcutManager: ObservableObject {
                 end tell
                 """
                 _ = try? await AppleScriptHelper.executeVoid(script)
-                self.runningItemID = nil
-                self.showBanner("Toggled appearance mode")
+                self.runningSlotIndex = nil
+                self.showBanner("Switched theme")
             }
 
         case .lockScreen:
@@ -447,7 +448,7 @@ final class ShortcutManager: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(150))
                 let saverURL = URL(fileURLWithPath: "/System/Library/CoreServices/ScreenSaverEngine.app")
                 NSWorkspace.shared.open(saverURL)
-                self.runningItemID = nil
+                self.runningSlotIndex = nil
             }
 
         case .sleepDisplay:
@@ -459,7 +460,7 @@ final class ShortcutManager: ObservableObject {
                 try? proc.run()
                 proc.waitUntilExit()
                 await MainActor.run {
-                    self.runningItemID = nil
+                    self.runningSlotIndex = nil
                 }
             }
 
@@ -470,8 +471,7 @@ final class ShortcutManager: ObservableObject {
             if let airDropURL = URL(string: "nwnode://domain-AirDrop") {
                 NSWorkspace.shared.open(airDropURL)
             }
-            runningItemID = nil
-            showBanner("Opened AirDrop")
+            runningSlotIndex = nil
 
         case .emptyTrash:
             Task { @MainActor in
@@ -483,8 +483,8 @@ final class ShortcutManager: ObservableObject {
                 end tell
                 """
                 _ = try? await AppleScriptHelper.executeVoid(script)
-                self.runningItemID = nil
-                self.showBanner("Emptied Trash")
+                self.runningSlotIndex = nil
+                self.showBanner("Trash emptied")
             }
 
         case .openShortcutsApp:
@@ -493,435 +493,171 @@ final class ShortcutManager: ObservableObject {
             }
             let url = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
             NSWorkspace.shared.open(url)
-            runningItemID = nil
+            runningSlotIndex = nil
         }
     }
 }
 
-// MARK: - NotchShortcutsView (Open Notch View)
+// MARK: - HomeQuickShortcutsView (Rendered in the 'No events today' area)
 
-struct NotchShortcutsView: View {
+struct HomeQuickShortcutsView: View {
     @EnvironmentObject var vm: BoringViewModel
     @ObservedObject var shortcutManager = ShortcutManager.shared
-    @Default(.notchShortcutItems) var pinnedItems
-
-    enum TabFilter: String, CaseIterable {
-        case pinned = "Quick Actions"
-        case macShortcuts = "Mac Shortcuts"
-        case add = "Add New"
-    }
-
-    @State private var selectedFilter: TabFilter = .pinned
-    @State private var searchText: String = ""
-    @State private var newCustomShortcutName: String = ""
-    @State private var selectedSystemAction: SystemShortcutAction = .screenshot
+    @Default(.homeShortcutCount) var homeShortcutCount
+    @Default(.notchShortcutItems) var shortcutItems
 
     var body: some View {
-        HStack(spacing: 12) {
-            sidebarColumn
-            mainPanel
+        let count = min(max(homeShortcutCount, 1), 2)
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                ForEach(0..<count, id: \.self) { slotIdx in
+                    let item = shortcutManager.slotItem(at: slotIdx)
+                    HomeShortcutSlotButton(
+                        slotIndex: slotIdx,
+                        item: item,
+                        isCompact: count == 2,
+                        isRunning: shortcutManager.runningSlotIndex == slotIdx,
+                        onRun: {
+                            shortcutManager.run(slotIndex: slotIdx, viewModel: vm)
+                        }
+                    )
+                }
+            }
+            if let banner = shortcutManager.statusBanner {
+                Text(banner)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(Color.green)
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .onAppear {
+            shortcutManager.ensureTwoSlots()
             if shortcutManager.availableAppleShortcuts.isEmpty {
                 shortcutManager.refreshAppleShortcuts()
             }
         }
     }
-
-    private var sidebarColumn: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            sidebarButton(title: "Quick Actions", icon: "bolt.fill", filter: .pinned, badgeCount: pinnedItems.count)
-            sidebarButton(
-                title: "Mac Shortcuts",
-                icon: "square.stack.3d.up.fill",
-                filter: .macShortcuts,
-                badgeCount: shortcutManager.availableAppleShortcuts.count
-            )
-            sidebarButton(title: "Add Shortcut", icon: "plus.circle.fill", filter: .add, badgeCount: nil)
-
-            Spacer(minLength: 2)
-
-            if let banner = shortcutManager.statusBanner {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.green)
-                        .font(.system(size: 10))
-                    Text(banner)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.9))
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
-                .transition(.opacity)
-            } else {
-                Button {
-                    let url = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.up.forward.app")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Open Shortcuts.app")
-                            .font(.system(size: 10, weight: .medium))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(Color.gray)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(width: 145)
-    }
-
-    private func sidebarButton(title: String, icon: String, filter: TabFilter, badgeCount: Int?) -> some View {
-        let isSelected = selectedFilter == filter
-        return Button {
-            withAnimation(.smooth(duration: 0.2)) {
-                selectedFilter = filter
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(isSelected ? Color.white : Color.gray)
-                    .frame(width: 16)
-                Text(title)
-                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? Color.white : Color.gray)
-                    .lineLimit(1)
-                Spacer(minLength: 2)
-                if let badgeCount, badgeCount > 0 {
-                    Text("\(badgeCount)")
-                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(isSelected ? Color.white : Color.gray)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(Capsule().fill(Color.white.opacity(isSelected ? 0.22 : 0.08)))
-                }
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isSelected ? Color.white.opacity(0.14) : Color.white.opacity(0.04))
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var mainPanel: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.white.opacity(0.04))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            .overlay {
-                switch selectedFilter {
-                case .pinned:
-                    pinnedGridView
-                case .macShortcuts:
-                    macShortcutsListView
-                case .add:
-                    quickAddPanel
-                }
-            }
-    }
-
-    private var pinnedGridView: some View {
-        Group {
-            if pinnedItems.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "bolt.slash.fill")
-                        .font(.system(size: 22))
-                        .foregroundStyle(Color.gray)
-                    Text("No pinned shortcuts")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.gray)
-                    Button("Restore Defaults") {
-                        shortcutManager.resetToDefaultShortcuts()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHGrid(
-                        rows: [
-                            GridItem(.flexible(), spacing: 8),
-                            GridItem(.flexible(), spacing: 8)
-                        ],
-                        spacing: 8
-                    ) {
-                        ForEach(pinnedItems) { item in
-                            ShortcutTileCard(
-                                item: item,
-                                isRunning: shortcutManager.runningItemID == item.id,
-                                onRun: {
-                                    shortcutManager.run(item, viewModel: vm)
-                                },
-                                onRemove: {
-                                    shortcutManager.removeShortcutItem(item)
-                                }
-                            )
-                        }
-                    }
-                    .padding(10)
-                }
-            }
-        }
-    }
-
-    private var macShortcutsListView: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                HStack(spacing: 5) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.gray)
-                    TextField("Search Mac Shortcuts…", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Color.white)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
-
-                Button {
-                    shortcutManager.refreshAppleShortcuts()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.white.opacity(0.8))
-                        .padding(5)
-                        .background(Circle().fill(Color.white.opacity(0.1)))
-                }
-                .buttonStyle(.plain)
-                .help("Reload shortcuts from macOS Shortcuts.app")
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-
-            let filtered = shortcutManager.availableAppleShortcuts.filter {
-                searchText.isEmpty || $0.localizedCaseInsensitiveContains(searchText)
-            }
-
-            if shortcutManager.isLoadingShortcuts {
-                Spacer()
-                ProgressView()
-                    .controlSize(.small)
-                Text("Loading Shortcuts…")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.gray)
-                Spacer()
-            } else if filtered.isEmpty {
-                Spacer()
-                VStack(spacing: 4) {
-                    Text(shortcutManager.availableAppleShortcuts.isEmpty
-                         ? "No Apple Shortcuts found"
-                         : "No matching shortcuts")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(Color.gray)
-                    Text("You can also type any Shortcut name in 'Add Shortcut'.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.gray.opacity(0.8))
-                }
-                Spacer()
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHGrid(
-                        rows: [
-                            GridItem(.flexible(), spacing: 6),
-                            GridItem(.flexible(), spacing: 6)
-                        ],
-                        spacing: 8
-                    ) {
-                        ForEach(filtered, id: \.self) { name in
-                            MacShortcutRowChip(
-                                name: name,
-                                isPinned: shortcutManager.isAppleShortcutPinned(name),
-                                isRunning: shortcutManager.runningShortcutName == name,
-                                onRun: {
-                                    shortcutManager.runAppleShortcut(named: name, viewModel: vm)
-                                },
-                                onTogglePin: {
-                                    shortcutManager.togglePinAppleShortcut(name)
-                                }
-                            )
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
-                }
-            }
-        }
-    }
-
-    private var quickAddPanel: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Pin Apple Shortcut by Name")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                HStack(spacing: 6) {
-                    TextField("Shortcut name in Shortcuts.app", text: $newCustomShortcutName)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11.5))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.white.opacity(0.08)))
-                    Button("Pin") {
-                        let trimmed = newCustomShortcutName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return }
-                        if !shortcutManager.isAppleShortcutPinned(trimmed) {
-                            shortcutManager.togglePinAppleShortcut(trimmed)
-                        }
-                        newCustomShortcutName = ""
-                        selectedFilter = .pinned
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(newCustomShortcutName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                Divider().overlay(Color.white.opacity(0.1))
-
-                HStack(spacing: 8) {
-                    Button {
-                        pickApplicationToAdd()
-                    } label: {
-                        Label("Pin Application…", systemImage: "app.badge.plus")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Button {
-                        shortcutManager.resetToDefaultShortcuts()
-                        selectedFilter = .pinned
-                    } label: {
-                        Label("Reset Defaults", systemImage: "arrow.counterclockwise")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            .padding(12)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func pickApplicationToAdd() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose an Application to Pin to Notch"
-        panel.allowedContentTypes = [.application]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-
-        SharingStateManager.shared.preventNotchClose = true
-        panel.begin { response in
-            Task { @MainActor in
-                SharingStateManager.shared.preventNotchClose = false
-                guard response == .OK, let url = panel.url else { return }
-                let appName = url.deletingPathExtension().lastPathComponent
-                let bundleID = Bundle(url: url)?.bundleIdentifier ?? ""
-                let newItem = NotchShortcutItem(
-                    title: appName,
-                    subtitle: "Launch App",
-                    icon: "app.fill",
-                    tintHex: "#0A84FF",
-                    kind: .openApp(bundleIdentifier: bundleID, appPath: url.path)
-                )
-                var items = Defaults[.notchShortcutItems]
-                items.append(newItem)
-                Defaults[.notchShortcutItems] = items
-                shortcutManager.showBanner("Pinned \(appName)")
-                selectedFilter = .pinned
-            }
-        }
-    }
 }
 
-private struct ShortcutTileCard: View {
+private struct HomeShortcutSlotButton: View {
+    let slotIndex: Int
     let item: NotchShortcutItem
+    let isCompact: Bool
     let isRunning: Bool
     let onRun: () -> Void
-    let onRemove: () -> Void
 
+    @ObservedObject var shortcutManager = ShortcutManager.shared
+    @Default(.homeShortcutCount) var homeShortcutCount
     @State private var isHovered: Bool = false
 
     var body: some View {
         Button(action: onRun) {
-            HStack(spacing: 8) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(item.tintColor.opacity(isHovered ? 0.95 : 0.8))
-                        .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(item.tintColor.opacity(isHovered ? 0.95 : 0.82))
+                            .frame(width: 24, height: 24)
 
-                    if isRunning {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(Color.white)
-                    } else if case .openApp(let bundleID, let appPath) = item.kind,
-                              let iconImage = resolveAppIcon(bundleID: bundleID, path: appPath) {
-                        Image(nsImage: iconImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 22, height: 22)
-                    } else {
-                        Image(systemName: item.icon)
-                            .font(.system(size: 13, weight: .semibold))
+                        if isRunning {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(Color.white)
+                        } else if case .openApp(let bundleID, let appPath) = item.kind,
+                                  let iconImage = resolveAppIcon(bundleID: bundleID, path: appPath) {
+                            Image(nsImage: iconImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 18, height: 18)
+                        } else {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(Color.white)
+                        }
+                    }
+
+                    if !isCompact {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title)
+                                .font(.system(size: 11.5, weight: .semibold))
+                                .foregroundStyle(Color.white)
+                                .lineLimit(1)
+                            Text(item.subtitle)
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(Color.gray)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer(minLength: 0)
+                }
+
+                if isCompact {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.title)
+                            .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(Color.white)
+                            .lineLimit(1)
+                        Text(item.subtitle)
+                            .font(.system(size: 9, weight: .regular))
+                            .foregroundStyle(Color.gray)
+                            .lineLimit(1)
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.title)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
-                    Text(item.subtitle)
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(Color.gray)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .frame(width: 138, height: 44)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
                     .fill(Color.white.opacity(isHovered ? 0.14 : 0.07))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .strokeBorder(item.tintColor.opacity(isHovered ? 0.55 : 0.15), lineWidth: 1)
+                    .strokeBorder(item.tintColor.opacity(isHovered ? 0.55 : 0.18), lineWidth: 1)
             )
             .scaleEffect(isHovered ? 1.02 : 1.0)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
+            .animation(.easeOut(duration: 0.14), value: isHovered)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
             isHovered = hovering
         }
         .contextMenu {
-            Button("Run \"\(item.title)\"") {
-                onRun()
+            Section("Shortcut Button \(slotIndex + 1)") {
+                Button("Run \"\(item.title)\"") {
+                    onRun()
+                }
             }
+
+            Menu("Change to System Action") {
+                ForEach(SystemShortcutAction.allCases) { action in
+                    Button(action.defaultTitle) {
+                        shortcutManager.setSlotToSystemAction(action, slotIndex: slotIndex)
+                    }
+                }
+            }
+
+            if !shortcutManager.availableAppleShortcuts.isEmpty {
+                Menu("Change to Mac Shortcut") {
+                    ForEach(shortcutManager.availableAppleShortcuts, id: \.self) { name in
+                        Button(name) {
+                            shortcutManager.setSlotToAppleShortcut(name, slotIndex: slotIndex)
+                        }
+                    }
+                }
+            }
+
+            Button("Choose Application (.app)…") {
+                shortcutManager.pickAppForSlot(slotIndex)
+            }
+
             Divider()
-            Button("Remove from Notch", role: .destructive) {
-                onRemove()
+
+            Button(homeShortcutCount == 1 ? "Show 2 Shortcut Buttons" : "Show Only 1 Shortcut Button") {
+                Defaults[.homeShortcutCount] = (homeShortcutCount == 1) ? 2 : 1
             }
         }
     }
@@ -937,127 +673,94 @@ private struct ShortcutTileCard: View {
     }
 }
 
-private struct MacShortcutRowChip: View {
-    let name: String
-    let isPinned: Bool
-    let isRunning: Bool
-    let onRun: () -> Void
-    let onTogglePin: () -> Void
-
-    @State private var isHovered: Bool = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Button(action: onRun) {
-                HStack(spacing: 6) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.pink.opacity(0.85))
-                            .frame(width: 22, height: 22)
-                        if isRunning {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .tint(Color.white)
-                        } else {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(Color.white)
-                        }
-                    }
-                    Text(name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
-                }
-            }
-            .buttonStyle(.plain)
-
-            Spacer(minLength: 4)
-
-            Button(action: onTogglePin) {
-                Image(systemName: isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(isPinned ? Color.yellow : Color.gray)
-                    .padding(4)
-            }
-            .buttonStyle(.plain)
-            .help(isPinned ? "Unpin from Notch" : "Pin to Notch")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .frame(width: 165, height: 34)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(isHovered ? 0.13 : 0.07))
-        )
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}
-
-// MARK: - Settings Section for Notch Shortcuts
+// MARK: - Settings Section for Home Quick Shortcuts
 
 struct NotchShortcutsSettingsSection: View {
     @ObservedObject var shortcutManager = ShortcutManager.shared
     @Default(.boringShortcuts) var boringShortcuts
+    @Default(.homeShortcutCount) var homeShortcutCount
+    @Default(.alwaysShowHomeShortcuts) var alwaysShowHomeShortcuts
     @Default(.closeNotchOnShortcutRun) var closeNotchOnShortcutRun
-    @Default(.notchShortcutItems) var pinnedItems
-    @State private var customShortcutName: String = ""
-    @State private var selectedSystemAction: SystemShortcutAction = .screenshot
+    @Default(.notchShortcutItems) var shortcutItems
+
+    @State private var customShortcut1: String = ""
+    @State private var customShortcut2: String = ""
 
     var body: some View {
         Section {
             Defaults.Toggle(key: .boringShortcuts) {
-                Text("Show Shortcuts tab in notch")
+                Text("Show custom shortcuts in 'No events today' area")
             }
+            Picker("Number of shortcut buttons", selection: $homeShortcutCount) {
+                Text("1 Button").tag(1)
+                Text("2 Buttons").tag(2)
+            }
+            .disabled(!boringShortcuts)
+
+            Defaults.Toggle(key: .alwaysShowHomeShortcuts) {
+                Text("Always show shortcuts below calendar dates (even when events exist)")
+            }
+            .disabled(!boringShortcuts)
+
             Defaults.Toggle(key: .closeNotchOnShortcutRun) {
                 Text("Auto-close notch after running a shortcut")
             }
             .disabled(!boringShortcuts)
-
-            HStack {
-                TextField("Apple Shortcut name…", text: $customShortcutName)
-                    .textFieldStyle(.roundedBorder)
-                Button("Pin Apple Shortcut") {
-                    let trimmed = customShortcutName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    if !shortcutManager.isAppleShortcutPinned(trimmed) {
-                        shortcutManager.togglePinAppleShortcut(trimmed)
-                    }
-                    customShortcutName = ""
-                }
-                .disabled(customShortcutName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            HStack {
-                Picker("Add System Action", selection: $selectedSystemAction) {
-                    ForEach(SystemShortcutAction.allCases) { action in
-                        Text(action.defaultTitle).tag(action)
-                    }
-                }
-                Button("Add Action") {
-                    let item = NotchShortcutItem(
-                        title: selectedSystemAction.defaultTitle,
-                        subtitle: "System Action",
-                        icon: selectedSystemAction.defaultIcon,
-                        tintHex: selectedSystemAction.defaultTintHex,
-                        kind: .systemAction(selectedSystemAction)
-                    )
-                    var items = Defaults[.notchShortcutItems]
-                    items.append(item)
-                    Defaults[.notchShortcutItems] = items
-                }
-                Button("Reset Defaults") {
-                    shortcutManager.resetToDefaultShortcuts()
-                }
-            }
         } header: {
-            Text("Notch Shortcuts Bar")
+            Text("Home Notch Shortcuts")
         } footer: {
-            Text("Access pinned Quick Actions and macOS Shortcuts directly from the Shortcuts tab inside the notch.")
+            Text("Right-click any shortcut button directly in the notch (or configure below) to change its action, app, or macOS Shortcut.")
                 .font(.caption)
                 .foregroundStyle(Color.secondary)
+        }
+
+        if boringShortcuts {
+            slotConfigSection(slotIndex: 0, customName: $customShortcut1)
+            if homeShortcutCount >= 2 {
+                slotConfigSection(slotIndex: 1, customName: $customShortcut2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func slotConfigSection(slotIndex: Int, customName: Binding<String>) -> some View {
+        let currentItem = shortcutManager.slotItem(at: slotIndex)
+        Section {
+            HStack {
+                Text("Current:")
+                    .foregroundStyle(Color.secondary)
+                Image(systemName: currentItem.icon)
+                Text(currentItem.title)
+                    .fontWeight(.semibold)
+                Text("(\(currentItem.subtitle))")
+                    .foregroundStyle(Color.secondary)
+                Spacer()
+                Button("Choose App (.app)…") {
+                    shortcutManager.pickAppForSlot(slotIndex)
+                }
+            }
+
+            Menu("Set to Quick System Action: \(currentItem.title)") {
+                ForEach(SystemShortcutAction.allCases) { action in
+                    Button(action.defaultTitle) {
+                        shortcutManager.setSlotToSystemAction(action, slotIndex: slotIndex)
+                    }
+                }
+            }
+
+            HStack {
+                TextField("Or type macOS Shortcut name…", text: customName)
+                    .textFieldStyle(.roundedBorder)
+                Button("Set Mac Shortcut") {
+                    let trimmed = customName.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    shortcutManager.setSlotToAppleShortcut(trimmed, slotIndex: slotIndex)
+                    customName.wrappedValue = ""
+                }
+                .disabled(customName.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        } header: {
+            Text("Shortcut Button \(slotIndex + 1)")
         }
     }
 }

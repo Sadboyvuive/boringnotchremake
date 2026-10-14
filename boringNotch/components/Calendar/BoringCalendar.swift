@@ -249,7 +249,11 @@ struct EmptyEventsView: View {
     let selectedDate: Date
     
     var body: some View {
-        VStack {
+        Group {
+                    if Defaults[.boringShortcuts] {
+                        HomeQuickShortcutsView()
+                    } else {
+                        VStack {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.title)
                 .foregroundColor(Color(white: 0.65))
@@ -260,6 +264,8 @@ struct EmptyEventsView: View {
                 .font(.caption)
                 .foregroundColor(Color(white: 0.65))
         }
+                    }
+                }
     }
 }
 
