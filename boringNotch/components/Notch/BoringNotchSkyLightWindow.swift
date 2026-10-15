@@ -58,7 +58,7 @@ class BoringNotchSkyLightWindow: NSPanel {
         titlebarAppearsTransparent = true
         backgroundColor = .clear
         isMovable = false
-        level = .mainMenu + 3
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
         hasShadow = false
         isReleasedWhenClosed = false
         
