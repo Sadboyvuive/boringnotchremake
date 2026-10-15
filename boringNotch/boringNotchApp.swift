@@ -67,8 +67,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isScreenLocked: Bool = false
     private var windowScreenDidChangeObserver: Any?
     private var dragDetectors: [String: DragDetector] = [:] // UUID -> DragDetector
-    private var globalMouseMonitor: Any?
-    private var localMouseMonitor: Any?
+    private var mousePollingTimer: Timer?
+    private var outsideOpenNotchSince: Date?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -76,14 +76,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.removeObserver(self)
-        if let globalMouseMonitor {
-            NSEvent.removeMonitor(globalMouseMonitor)
-            self.globalMouseMonitor = nil
-        }
-        if let localMouseMonitor {
-            NSEvent.removeMonitor(localMouseMonitor)
-            self.localMouseMonitor = nil
-        }
+        mousePollingTimer?.invalidate()
+        mousePollingTimer = nil
         if let observer = screenLockedObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
             screenLockedObserver = nil
@@ -245,32 +239,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Dynamic Mouse Passthrough Below Closed Notch
+    // MARK: - Continuous 25Hz Mouse Passthrough Polling (Fixes clicks below closed notch)
 
-    private func setupMousePassthroughMonitors() {
-        if let globalMouseMonitor {
-            NSEvent.removeMonitor(globalMouseMonitor)
-        }
-        if let localMouseMonitor {
-            NSEvent.removeMonitor(localMouseMonitor)
-        }
-
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .leftMouseDragged]
-        ) { [weak self] _ in
+    private func setupMousePassthroughPolling() {
+        mousePollingTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.04, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateMousePassthroughForAllWindows()
             }
         }
-
-        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            Task { @MainActor in
-                self?.updateMousePassthroughForAllWindows()
-            }
-            return event
-        }
+        RunLoop.main.add(timer, forMode: .common)
+        mousePollingTimer = timer
     }
 
     @MainActor
@@ -286,14 +265,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screenFrame = screen.frame
 
         if viewModel.notchState == .open {
-            let openWidth = openNotchSize.width + 24
-            let openHeight = openNotchSize.height + 24
+            let openWidth = openNotchSize.width + 16
+            let openHeight = openNotchSize.height + 16
             let minX = screenFrame.midX - openWidth / 2
             let maxX = screenFrame.midX + openWidth / 2
             let minY = screenFrame.maxY - openHeight
             let maxY = screenFrame.maxY + 4
-            return mouse.x >= minX && mouse.x <= maxX && mouse.y >= minY && mouse.y <= maxY
+            let insideOpen = mouse.x >= minX && mouse.x <= maxX && mouse.y >= minY && mouse.y <= maxY
+            if insideOpen {
+                outsideOpenNotchSince = nil
+                return true
+            } else {
+                // If cursor left the open notch for > 150ms, close it automatically and pass clicks through
+                let now = Date()
+                if let since = outsideOpenNotchSince {
+                    if now.timeIntervalSince(since) > 0.15 && !viewModel.isBatteryPopoverActive && !SharingStateManager.shared.preventNotchClose {
+                        outsideOpenNotchSince = nil
+                        viewModel.close()
+                    }
+                } else {
+                    outsideOpenNotchSince = now
+                }
+                return false
+            }
         } else {
+            outsideOpenNotchSince = nil
             let hasCardPopup = (coordinator.expandingView.show && coordinator.expandingView.type == .headphone && Defaults[.headphonePopupStyle] == .card)
                 || (coordinator.sneakPeek.show && !Defaults[.inlineHUD] && coordinator.sneakPeek.type != .music && coordinator.sneakPeek.type != .battery)
 
@@ -301,14 +297,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let activeHeight: CGFloat
 
             if hasCardPopup {
-                activeWidth = 430
-                activeHeight = 145
+                activeWidth = 420
+                activeHeight = 140
             } else if coordinator.expandingView.show {
                 activeWidth = 640
-                activeHeight = max(38, viewModel.effectiveClosedNotchHeight + 8)
+                activeHeight = max(36, viewModel.effectiveClosedNotchHeight + 4)
             } else {
-                activeWidth = max(260, viewModel.closedNotchSize.width + 90)
-                activeHeight = max(38, viewModel.effectiveClosedNotchHeight + 6)
+                activeWidth = max(250, viewModel.closedNotchSize.width + 80)
+                activeHeight = max(36, viewModel.effectiveClosedNotchHeight + 4)
             }
 
             let minX = screenFrame.midX - activeWidth / 2
@@ -328,16 +324,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 let hidden = viewModel.hideOnClosed
                 win.alphaValue = hidden ? 0 : 1
                 let capture = shouldCaptureMouse(for: viewModel, on: win.screen ?? NSScreen.screen(withUUID: uuid))
-                if win.ignoresMouseEvents == capture {
-                    win.ignoresMouseEvents = !capture
+                let shouldIgnore = !capture
+                if win.ignoresMouseEvents != shouldIgnore {
+                    win.ignoresMouseEvents = shouldIgnore
                 }
             }
         } else if let win = window {
             let hidden = vm.hideOnClosed
             win.alphaValue = hidden ? 0 : 1
             let capture = shouldCaptureMouse(for: vm, on: win.screen ?? NSScreen.main)
-            if win.ignoresMouseEvents == capture {
-                win.ignoresMouseEvents = !capture
+            let shouldIgnore = !capture
+            if win.ignoresMouseEvents != shouldIgnore {
+                win.ignoresMouseEvents = shouldIgnore
             }
         }
     }
@@ -347,6 +345,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
         
         let window = BoringNotchSkyLightWindow(contentRect: rect, styleMask: styleMask, backing: .buffered, defer: false)
+        window.acceptsMouseMovedEvents = true
+        window.ignoresMouseEvents = true
         
         // Enable SkyLight only when screen is locked
         if isScreenLocked {
@@ -546,7 +546,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupDragDetectors()
-        setupMousePassthroughMonitors()
+        setupMousePassthroughPolling()
         _ = HeadphoneManager.shared
         _ = ShortcutManager.shared
 
