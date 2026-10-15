@@ -123,6 +123,8 @@ struct ContentView: View {
                 
                 mainLayout
                     .frame(height: vm.notchState == .open ? vm.notchSize.height : (vm.hideOnClosed ? 0 : nil))
+                    .background(dragDetector)
+                    .compositingGroup()
                     .opacity(vm.hideOnClosed && vm.notchState == .closed ? 0 : 1)
                     .allowsHitTesting(!vm.hideOnClosed)
                     .conditionalModifier(true) { view in
@@ -202,17 +204,15 @@ struct ContentView: View {
                         .frame(width: computedChinWidth, height: vm.chinHeight)
                 }
             }
+            .scaleEffect(
+                x: gestureScale,
+                y: gestureScale,
+                anchor: .top
+            )
+            .animation(.smooth, value: gestureProgress)
         }
         .padding(.bottom, 8)
         .frame(maxWidth: windowSize.width, maxHeight: windowSize.height, alignment: .top)
-        .compositingGroup()
-        .scaleEffect(
-            x: gestureScale,
-            y: gestureScale,
-            anchor: .top
-        )
-        .animation(.smooth, value: gestureProgress)
-        .background(dragDetector)
         .preferredColorScheme(.dark)
         .environmentObject(vm)
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
@@ -509,13 +509,13 @@ struct ContentView: View {
     var dragDetector: some View {
         if Defaults[.boringShelf] && vm.notchState == .closed && !vm.hideOnClosed {
             Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: computedChinWidth, height: max(24, vm.effectiveClosedNotchHeight))
                 .contentShape(Rectangle())
-        .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
-            vm.dropEvent = true
-            ShelfStateViewModel.shared.load(providers)
-            return true
-        }
+                .onDrop(of: [.fileURL, .url, .utf8PlainText, .plainText, .data], isTargeted: $vm.dragDetectorTargeting) { providers in
+                    vm.dropEvent = true
+                    ShelfStateViewModel.shared.load(providers)
+                    return true
+                }
         } else {
             EmptyView()
         }

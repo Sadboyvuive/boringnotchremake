@@ -67,6 +67,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isScreenLocked: Bool = false
     private var windowScreenDidChangeObserver: Any?
     private var dragDetectors: [String: DragDetector] = [:] // UUID -> DragDetector
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
@@ -74,6 +76,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.removeObserver(self)
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+            self.globalMouseMonitor = nil
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
         if let observer = screenLockedObserver {
             DistributedNotificationCenter.default().removeObserver(observer)
             screenLockedObserver = nil
@@ -226,10 +236,109 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard !viewModel.hideOnClosed else { return }
             viewModel.open()
             coordinator.currentView = .shelf
+            updateMousePassthroughForAllWindows()
         } else if !Defaults[.showOnAllDisplays], let windowScreen = window?.screen, screen == windowScreen {
             guard !vm.hideOnClosed else { return }
             vm.open()
             coordinator.currentView = .shelf
+            updateMousePassthroughForAllWindows()
+        }
+    }
+
+    // MARK: - Dynamic Mouse Passthrough Below Closed Notch
+
+    private func setupMousePassthroughMonitors() {
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .leftMouseDragged]
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateMousePassthroughForAllWindows()
+            }
+        }
+
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            Task { @MainActor in
+                self?.updateMousePassthroughForAllWindows()
+            }
+            return event
+        }
+    }
+
+    @MainActor
+    private func shouldCaptureMouse(for viewModel: BoringViewModel, on screen: NSScreen?) -> Bool {
+        guard !viewModel.hideOnClosed else { return false }
+        guard let screen = screen else { return false }
+
+        if viewModel.isBatteryPopoverActive || SharingStateManager.shared.preventNotchClose {
+            return true
+        }
+
+        let mouse = NSEvent.mouseLocation
+        let screenFrame = screen.frame
+
+        if viewModel.notchState == .open {
+            let openWidth = openNotchSize.width + 24
+            let openHeight = openNotchSize.height + 24
+            let minX = screenFrame.midX - openWidth / 2
+            let maxX = screenFrame.midX + openWidth / 2
+            let minY = screenFrame.maxY - openHeight
+            let maxY = screenFrame.maxY + 4
+            return mouse.x >= minX && mouse.x <= maxX && mouse.y >= minY && mouse.y <= maxY
+        } else {
+            let hasCardPopup = (coordinator.expandingView.show && coordinator.expandingView.type == .headphone && Defaults[.headphonePopupStyle] == .card)
+                || (coordinator.sneakPeek.show && !Defaults[.inlineHUD] && coordinator.sneakPeek.type != .music && coordinator.sneakPeek.type != .battery)
+
+            let activeWidth: CGFloat
+            let activeHeight: CGFloat
+
+            if hasCardPopup {
+                activeWidth = 430
+                activeHeight = 145
+            } else if coordinator.expandingView.show {
+                activeWidth = 640
+                activeHeight = max(38, viewModel.effectiveClosedNotchHeight + 8)
+            } else {
+                activeWidth = max(260, viewModel.closedNotchSize.width + 90)
+                activeHeight = max(38, viewModel.effectiveClosedNotchHeight + 6)
+            }
+
+            let minX = screenFrame.midX - activeWidth / 2
+            let maxX = screenFrame.midX + activeWidth / 2
+            let minY = screenFrame.maxY - activeHeight
+            let maxY = screenFrame.maxY + 4
+
+            return mouse.x >= minX && mouse.x <= maxX && mouse.y >= minY && mouse.y <= maxY
+        }
+    }
+
+    @MainActor
+    private func updateMousePassthroughForAllWindows() {
+        if Defaults[.showOnAllDisplays] {
+            for (uuid, win) in windows {
+                guard let viewModel = viewModels[uuid] else { continue }
+                let hidden = viewModel.hideOnClosed
+                win.alphaValue = hidden ? 0 : 1
+                let capture = shouldCaptureMouse(for: viewModel, on: win.screen ?? NSScreen.screen(withUUID: uuid))
+                if win.ignoresMouseEvents == capture {
+                    win.ignoresMouseEvents = !capture
+                }
+            }
+        } else if let win = window {
+            let hidden = vm.hideOnClosed
+            win.alphaValue = hidden ? 0 : 1
+            let capture = shouldCaptureMouse(for: vm, on: win.screen ?? NSScreen.main)
+            if win.ignoresMouseEvents == capture {
+                win.ignoresMouseEvents = !capture
+            }
         }
     }
 
@@ -261,6 +370,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main) { [weak self] _ in
                 Task { @MainActor in
                     self?.setupDragDetectors()
+                    self?.updateMousePassthroughForAllWindows()
                 }
         }
         return window
@@ -279,22 +389,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 y: screenFrame.origin.y + screenFrame.height - window.frame.height
             ))
         window.alphaValue = vm.hideOnClosed ? 0 : 1
-        window.ignoresMouseEvents = vm.hideOnClosed
-    }
-
-    @MainActor
-    private func updateFullscreenWindowVisibility() {
-        if Defaults[.showOnAllDisplays] {
-            for (uuid, win) in windows {
-                let hidden = viewModels[uuid]?.hideOnClosed ?? false
-                win.ignoresMouseEvents = hidden
-                win.alphaValue = hidden ? 0 : 1
-            }
-        } else if let win = window {
-            let hidden = vm.hideOnClosed
-            win.ignoresMouseEvents = hidden
-            win.alphaValue = hidden ? 0 : 1
-        }
+        updateMousePassthroughForAllWindows()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -357,7 +452,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             forName: .notchFullscreenVisibilityChanged, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.updateFullscreenWindowVisibility()
+                self?.updateMousePassthroughForAllWindows()
             }
         }
 
@@ -418,13 +513,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .closed:
                     await MainActor.run {
                         viewModel.open()
+                        self.updateMousePassthroughForAllWindows()
                     }
 
-                    let task = Task { [weak viewModel] in
+                    let task = Task { [weak self, weak viewModel] in
                         do {
                             try await Task.sleep(for: .seconds(3))
                             await MainActor.run {
                                 viewModel?.close()
+                                self?.updateMousePassthroughForAllWindows()
                             }
                         } catch { }
                     }
@@ -432,6 +529,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case .open:
                     await MainActor.run {
                         viewModel.close()
+                        self.updateMousePassthroughForAllWindows()
                     }
                 }
             }
@@ -448,6 +546,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         setupDragDetectors()
+        setupMousePassthroughMonitors()
         _ = HeadphoneManager.shared
         _ = ShortcutManager.shared
 
